@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Rescue Drone - Autonomous Mission Control</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet Map CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        dark: '#0b1120',
+                        card: '#151f32',
+                        cardBorder: '#1e293b',
+                        primary: '#3b82f6',
+                        success: '#10b981',
+                        danger: '#ef4444',
+                        warning: '#f59e0b',
+                        purple: '#8b5cf6',
+                        cyan: '#06b6d4'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(1000%); }
+        }
+        .scanline-effect {
+            background: linear-gradient(to bottom, rgba(59,130,246,0) 0%, rgba(59,130,246,0.18) 50%, rgba(59,130,246,0) 100%);
+            animation: scanline 4s linear infinite;
+        }
+        .leaflet-container {
+            background: #0f172a;
+            font-family: inherit;
+        }
+        .leaflet-popup-content-wrapper {
+            background: #1e293b !important;
+            color: #f1f5f9 !important;
+            border: 1px solid #334155 !important;
+            border-radius: 10px !important;
+        }
+        .leaflet-popup-tip {
+            background: #1e293b !important;
+        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0b1120; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-dark text-slate-300 font-sans antialiased flex h-screen overflow-hidden">
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-2"></div>
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-card h-full flex flex-col border-r border-cardBorder select-none">
+        <div class="p-5 border-b border-cardBorder">
+            <h1 class="text-lg font-bold text-white flex items-center gap-2.5">
+                <span class="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center text-primary">
+                    <i class="fa-solid fa-drone text-lg"></i>
+                </span>
+                <span>AI Rescue Drone</span>
+            </h1>
+            <p class="text-[11px] text-slate-400 mt-1">Autonomous Search & Rescue</p>
+        </div>
+
+        <nav class="flex-1 px-3 space-y-1.5 mt-4">
+            <a href="#dashboard" class="flex items-center gap-3 px-3.5 py-2.5 bg-slate-800 text-white font-medium rounded-xl text-xs transition">
+                <i class="fa-solid fa-house text-primary"></i> Mission Dashboard
+            </a>
+            <a href="#feeds" class="flex items-center gap-3 px-3.5 py-2.5 hover:bg-slate-800/60 rounded-xl text-xs transition">
+                <i class="fa-solid fa-video text-cyan"></i> Dual Feeds (RGB/IR)
+            </a>
+            <a href="#map" class="flex items-center gap-3 px-3.5 py-2.5 hover:bg-slate-800/60 rounded-xl text-xs transition">
+                <i class="fa-solid fa-map-location-dot text-emerald-400"></i> Tactical GPS Map
+            </a>
+            <a href="#victims" class="flex items-center gap-3 px-3.5 py-2.5 hover:bg-slate-800/60 rounded-xl text-xs transition">
+                <i class="fa-solid fa-user-injured text-danger"></i> Victim Records
+            </a>
+            <a href="/docs" target="_blank" class="flex items-center gap-3 px-3.5 py-2.5 hover:bg-slate-800/60 rounded-xl text-xs transition">
+                <i class="fa-solid fa-code text-purple"></i> FastAPI Docs (Swagger)
+            </a>
+        </nav>
+
+        <!-- Drone Hardware Specs Badge -->
+        <div class="p-4 mx-3 mb-4 rounded-xl bg-slate-900/80 border border-slate-800 text-xs">
+            <div class="flex items-center justify-between text-slate-400 mb-2">
+                <span>DRONE 01</span>
+                <span id="sidebar-battery-text" class="text-emerald-400 font-bold">88%</span>
+            </div>
+            <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mb-2.5">
+                <div id="sidebar-battery-bar" class="bg-emerald-500 h-full rounded-full transition-all duration-500" style="width: 88%;"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-slate-500 font-mono">
+                <span>ALT: <span id="sidebar-alt" class="text-slate-300">30.0m</span></span>
+                <span>SPD: <span id="sidebar-spd" class="text-slate-300">7.5m/s</span></span>
+            </div>
+        </div>
+
+        <div class="p-4 border-t border-cardBorder text-center text-xs text-slate-400">
+            <p class="font-semibold text-slate-300">Department of CSE</p>
+            <p class="text-[10px] text-slate-500 mt-0.5">Smart India Hackathon • AI Drone</p>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col h-full overflow-y-auto p-6 space-y-6">
+
+        <!-- Header -->
+        <header class="flex justify-between items-center text-xs">
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2 bg-card px-3.5 py-1.5 rounded-xl border border-cardBorder">
+                    <span id="system-status-dot" class="w-2.5 h-2.5 rounded-full bg-success animate-pulse"></span>
+                    <span id="system-status-text" class="font-semibold text-white">System Active • Member 5 Backend Connected</span>
+                </div>
+                <div class="bg-card px-3.5 py-1.5 rounded-xl border border-cardBorder text-slate-400">
+                    <i class="fa-solid fa-satellite text-primary mr-1"></i> <span id="satellites-count">14</span> GPS Satellites Locked
+                </div>
+            </div>
+            <div class="flex items-center gap-4 bg-card px-4 py-1.5 rounded-xl border border-cardBorder text-slate-300 font-mono">
+                <i class="fa-regular fa-clock text-primary"></i>
+                <span id="live-clock">2026-10-15 02:30:00</span>
+            </div>
+        </header>
+
+        <!-- Metrics Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <!-- Victims Detected Card -->
+            <div class="bg-card p-4 rounded-2xl border border-cardBorder flex items-center gap-4 relative overflow-hidden">
+                <div class="w-12 h-12 rounded-xl bg-danger/20 flex items-center justify-center text-danger text-xl">
+                    <i class="fa-solid fa-user-injured"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-400">Victims Detected</p>
+                    <p class="text-2xl font-bold text-white mt-0.5">
+                        <span id="metric-victims">4</span>
+                        <span class="text-[11px] text-danger font-medium ml-2 bg-danger/10 px-1.5 py-0.5 rounded">
+                            <span id="metric-critical">1</span> Critical
+                        </span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Drone Status Card -->
+            <div class="bg-card p-4 rounded-2xl border border-cardBorder flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center text-primary text-xl">
+                    <i class="fa-solid fa-drone"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-400">Drone Flight Mode</p>
+                    <p class="text-xl font-bold text-white flex items-center gap-2 mt-0.5">
+                        <span id="metric-status">Searching</span>
+                        <span class="w-2 h-2 rounded-full bg-success"></span>
+                    </p>
+                    <p class="text-[11px] text-slate-400 font-mono mt-0.5">Battery: <span id="metric-battery" class="text-emerald-400">88%</span> (23.4V)</p>
+                </div>
+            </div>
+
+            <!-- GPS Fix Coordinates Card -->
+            <div class="bg-card p-4 rounded-2xl border border-cardBorder flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-success/20 flex items-center justify-center text-success text-xl">
+                    <i class="fa-solid fa-location-dot"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-400">GPS Drone Telemetry</p>
+                    <p class="text-sm font-bold font-mono text-white mt-0.5" id="metric-gps">13.0827° N, 80.2707° E</p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">ALT: <span id="metric-alt">30.0m</span> • SPD: <span id="metric-spd">7.5m/s</span></p>
+                </div>
+            </div>
+
+            <!-- Sensor Mode Card -->
+            <div class="bg-card p-4 rounded-2xl border border-cardBorder flex items-center gap-4">
+                <div class="w-12 h-12 rounded-xl bg-purple/20 flex items-center justify-center text-purple text-xl">
+                    <i class="fa-solid fa-temperature-half"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-400">Thermal / IR Engine</p>
+                    <p class="text-xl font-bold text-white flex items-center gap-2 mt-0.5">
+                        Inferno Active <span class="w-2 h-2 rounded-full bg-purple"></span>
+                    </p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Res: 800 x 600 • 25 FPS</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Camera Feeds (RGB YOLO Tracking + Simulated Thermal IR) -->
+        <div id="feeds" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- RGB YOLO Feed -->
+            <div class="bg-card rounded-2xl border border-cardBorder overflow-hidden flex flex-col shadow-lg">
+                <div class="p-3.5 border-b border-cardBorder flex items-center justify-between">
+                    <div class="flex items-center gap-2 font-semibold text-xs text-white">
+                        <i class="fa-solid fa-video text-primary"></i> RGB Camera • YOLOv8 Detection & ByteTrack
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="setCameraSource('simulation')" id="btn-src-sim" class="px-2.5 py-1 bg-primary text-white rounded-lg text-[10px] font-semibold">Simulation</button>
+                        <button onclick="openPhoneModal()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[10px] font-semibold transition">
+                            <i class="fa-solid fa-mobile-screen mr-1"></i> Phone Cam
+                        </button>
+                        <button onclick="startWebcam()" id="btn-src-webcam" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[10px] font-semibold transition">
+                            <i class="fa-solid fa-camera mr-1"></i> USB Webcam
+                        </button>
+                    </div>
+                </div>
+                <div class="relative bg-slate-950 h-80 w-full flex items-center justify-center overflow-hidden">
+                    <canvas id="rgb-canvas" width="640" height="360" class="w-full h-full object-cover"></canvas>
+                    <div class="scanline-effect absolute inset-0 pointer-events-none"></div>
+
+                    <!-- HUD Overlay -->
+                    <div class="absolute top-3 left-3 flex gap-2">
+                        <span class="bg-danger text-white text-[10px] px-2 py-0.5 rounded font-bold tracking-wider">● LIVE</span>
+                        <span class="bg-slate-900/90 text-white text-[10px] px-2 py-0.5 rounded border border-slate-700">YOLOv8 ByteTrack</span>
+                    </div>
+                    <div class="absolute bottom-3 left-3 bg-slate-900/80 px-2.5 py-1 rounded text-[10px] font-mono text-emerald-400">
+                        LAT: <span id="feed-lat">13.0827</span> • LON: <span id="feed-lon">80.2707</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Thermal Feed -->
+            <div class="bg-card rounded-2xl border border-cardBorder overflow-hidden flex flex-col shadow-lg">
+                <div class="p-3.5 border-b border-cardBorder flex items-center justify-between">
+                    <div class="flex items-center gap-2 font-semibold text-xs text-white">
+                        <i class="fa-solid fa-temperature-half text-purple"></i> Thermal IR Feed • Heat Confirmation
+                    </div>
+                    <span class="text-[10px] text-purple bg-purple/20 px-2.5 py-0.5 rounded-full font-semibold">Simulated FLIR IR</span>
+                </div>
+                <div class="relative bg-slate-950 h-80 w-full flex items-center justify-center overflow-hidden">
+                    <canvas id="thermal-canvas" width="640" height="360" class="w-full h-full object-cover"></canvas>
+
+                    <!-- Temperature Scale Bar -->
+                    <div class="absolute right-3 top-6 bottom-6 w-3 rounded-full bg-gradient-to-b from-yellow-300 via-red-500 to-blue-900 border border-slate-800 shadow-md flex flex-col justify-between py-1 text-[8px] text-right text-white pr-4 font-mono select-none">
+                        <span>42°C</span>
+                        <span>37°C</span>
+                        <span>25°C</span>
+                    </div>
+
+                    <div class="absolute bottom-3 left-3 bg-slate-900/80 px-2.5 py-1 rounded text-[10px] font-mono text-purple">
+                        INFERNO CALIBRATION: ACTIVE
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tactical GPS Map & Victim Records Data Grid -->
+        <div id="map" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- Satellite Map -->
+            <div class="bg-card rounded-2xl border border-cardBorder p-4 flex flex-col shadow-lg">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="font-semibold text-xs text-white flex items-center gap-2">
+                        <i class="fa-solid fa-map-location-dot text-emerald-400"></i> Tactical GPS Satellite View
+                    </h3>
+                    <div class="text-[10px] text-slate-400 flex items-center gap-2 font-mono">
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Drone</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500"></span> Critical</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500"></span> Hazard</span>
+                    </div>
+                </div>
+                <div id="leaflet-map" class="w-full h-80 rounded-xl overflow-hidden border border-slate-800"></div>
+            </div>
+
+            <!-- Victim Records Table -->
+            <div id="victims" class="bg-card rounded-2xl border border-cardBorder p-4 flex flex-col shadow-lg">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="font-semibold text-xs text-white flex items-center gap-2">
+                        <i class="fa-solid fa-list-check text-primary"></i> Live Victim & Hazard Records (Member 3 Evaluated)
+                    </h3>
+                    <button onclick="exportCSV()" class="text-[10px] bg-primary/20 text-primary hover:bg-primary/30 border border-primary/40 px-2.5 py-1 rounded-lg transition font-semibold">
+                        <i class="fa-solid fa-file-csv mr-1"></i> Export CSV
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto max-h-80">
+                    <table class="w-full text-left text-xs">
+                        <thead class="text-[10px] text-slate-400 uppercase bg-slate-900/60 sticky top-0">
+                            <tr>
+                                <th class="py-2 px-3">Victim</th>
+                                <th class="py-2 px-3">Coordinates</th>
+                                <th class="py-2 px-3">Risk</th>
+                                <th class="py-2 px-3">Severity</th>
+                                <th class="py-2 px-3">Status</th>
+                                <th class="py-2 px-3 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="victim-table-body" class="divide-y divide-slate-800/60">
+                            <!-- Injected dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action & Flight Control Footer -->
+        <footer class="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
+            <button onclick="triggerAction('toggle_status')" class="py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition shadow-md">
+                <i class="fa-solid fa-play"></i> Toggle Search
+            </button>
+            <button onclick="triggerAction('calibrate_thermal')" class="py-3 px-4 bg-purple hover:bg-purple/90 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition shadow-md">
+                <i class="fa-solid fa-fire"></i> Calibrate Thermal
+            </button>
+            <button onclick="triggerAction('save_victim')" class="py-3 px-4 bg-cyan hover:bg-cyan/90 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition shadow-md">
+                <i class="fa-solid fa-location-pin"></i> Save Geolocation
+            </button>
+            <button onclick="triggerAction('rtl')" class="py-3 px-4 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition shadow-md">
+                <i class="fa-solid fa-house-chimney"></i> Return to Launch (RTL)
+            </button>
+            <button onclick="exportJSON()" class="py-3 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition shadow-md">
+                <i class="fa-solid fa-download"></i> Export JSON Report
+            </button>
+        </footer>
+    </main>
+
+    <!-- Mobile Camera Modal -->
+    <div id="phone-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-card border border-cardBorder p-6 rounded-2xl max-w-sm w-full mx-4 text-center">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-white text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-qrcode text-primary"></i> Connect Mobile Camera
+                </h3>
+                <button onclick="closePhoneModal()" class="text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="bg-white p-4 rounded-xl inline-block mb-4 shadow-lg">
+                <img src="/static/qr_cloudflare.png" alt="QR Code" class="w-44 h-44 object-contain">
+            </div>
+            <p class="text-xs text-slate-300 mb-2">Scan with your phone to stream camera feed directly into dashboard.</p>
+            <p class="text-[10px] text-slate-500 font-mono break-all mb-4" id="phone-url-display">http://localhost:8000/static/camera.html</p>
+            <button onclick="closePhoneModal()" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl transition">
+                Close
+            </button>
+        </div>
+    </div>
+
+    <!-- Hidden Video element for webcam capture -->
+    <video id="webcam-video" autoplay playsinline muted class="hidden"></video>
+
+    <!-- Interactive Script -->
+    <script>
+        let currentSource = 'simulation';
+        let webcamStream = null;
+
+        // Clock
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('live-clock').innerText = now.toISOString().replace('T', ' ').slice(0, 19);
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Toast notifications
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const colors = {
+                success: 'bg-emerald-600 text-white border-emerald-400',
+                warning: 'bg-amber-600 text-white border-amber-400',
+                danger: 'bg-rose-600 text-white border-rose-400',
+                info: 'bg-blue-600 text-white border-blue-400'
+            };
+            toast.className = `${colors[type] || colors.info} border px-4 py-2.5 rounded-xl shadow-2xl text-xs font-semibold flex items-center gap-2 transform transition-all duration-300 translate-y-2 opacity-0`;
+            toast.innerHTML = `<i class="fa-solid fa-circle-check"></i> <span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => { toast.classList.remove('translate-y-2', 'opacity-0'); }, 10);
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Initialize Leaflet Map
+        const map = L.map('leaflet-map', {
+            zoomControl: false
+        }).setView([13.0827, 80.2707], 16);
+
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 19,
+            attribution: 'Esri Satellite'
+        }).addTo(map);
+
+        // Custom Drone Icon with Pulse
+        const droneIcon = L.divIcon({
+            className: 'drone-marker-icon',
+            html: `
+                <div style="position:relative; width:24px; height:24px;">
+                    <div style="position:absolute; width:24px; height:24px; background:rgba(16,185,129,0.4); border-radius:50%; animation:ping 1.5s infinite;"></div>
+                    <div style="position:absolute; top:4px; left:4px; width:16px; height:16px; background:#10b981; border:2px solid #ffffff; border-radius:50%; box-shadow:0 0 10px #10b981;"></div>
+                </div>
+            `,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+
+        const droneMarker = L.marker([13.0827, 80.2707], { icon: droneIcon }).addTo(map);
+        droneMarker.bindPopup('<b style="color:#0f172a;">DRONE 01</b><br>Autonomous Rescue Search');
+
+        let trajectoryLine = L.polyline([], { color: '#10b981', weight: 2.5, opacity: 0.8, dashArray: '4, 4' }).addTo(map);
+        let victimMarkersGroup = L.layerGroup().addTo(map);
+        let hazardMarkersGroup = L.layerGroup().addTo(map);
+
+        // Poll Telemetry & Synchronize Data
+        async function fetchTelemetry() {
+            try {
+                const res = await fetch('/api/telemetry');
+                if (!res.ok) return;
+                const data = await res.json();
+
+                // Update Metrics
+                document.getElementById('metric-victims').innerText = data.victims_detected || 0;
+                document.getElementById('metric-critical').innerText = data.critical_victims || 0;
+                document.getElementById('metric-status').innerText = data.status || 'Active';
+                document.getElementById('metric-battery').innerText = `${data.battery_pct}%`;
+                document.getElementById('sidebar-battery-text').innerText = `${data.battery_pct}%`;
+                document.getElementById('sidebar-battery-bar').style.width = `${data.battery_pct}%`;
+                document.getElementById('metric-gps').innerText = `${data.latitude}° N, ${data.longitude}° E`;
+                document.getElementById('metric-alt').innerText = `${data.altitude_m}m`;
+                document.getElementById('metric-spd').innerText = `${data.speed_mps}m/s`;
+                document.getElementById('sidebar-alt').innerText = `${data.altitude_m}m`;
+                document.getElementById('sidebar-spd').innerText = `${data.speed_mps}m/s`;
+                document.getElementById('feed-lat').innerText = data.latitude;
+                document.getElementById('feed-lon').innerText = data.longitude;
+
+                // Update Drone Marker
+                droneMarker.setLatLng([data.latitude, data.longitude]);
+
+                // Update Flight Trajectory Breadcrumbs
+                if (data.breadcrumbs && data.breadcrumbs.length > 0) {
+                    const latlngs = data.breadcrumbs.map(b => [b[0], b[1]]);
+                    trajectoryLine.setLatLngs(latlngs);
+                }
+
+                // Render Victims Table & Map Markers
+                renderVictims(data.records || []);
+            } catch (e) {
+                console.error("Telemetry error:", e);
+            }
+        }
+        setInterval(fetchTelemetry, 1000);
+        fetchTelemetry();
+
+        // Render Victims
+        function renderVictims(victims) {
+            const tbody = document.getElementById('victim-table-body');
+            tbody.innerHTML = '';
+            victimMarkersGroup.clearLayers();
+
+            victims.forEach(v => {
+                // Table Row
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-800/40 transition";
+
+                const sevColors = {
+                    CRITICAL: 'bg-red-500/20 text-red-400 border-red-500/40',
+                    HIGH: 'bg-amber-500/20 text-amber-400 border-amber-500/40',
+                    MEDIUM: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
+                    LOW: 'bg-slate-500/20 text-slate-400 border-slate-500/40'
+                };
+
+                const statusColors = {
+                    Pending: 'bg-amber-500/10 text-amber-400',
+                    'In Progress': 'bg-cyan/10 text-cyan',
+                    Rescued: 'bg-emerald-500/10 text-emerald-400'
+                };
+
+                tr.innerHTML = `
+                    <td class="py-2.5 px-3 font-semibold text-white">
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-1.5 h-1.5 rounded-full ${v.status === 'Rescued' ? 'bg-emerald-400' : 'bg-red-400'}"></span>
+                            ${v.victim_id}
+                        </div>
+                    </td>
+                    <td class="py-2.5 px-3 font-mono text-[11px] text-slate-400">${v.latitude.toFixed(4)}, ${v.longitude.toFixed(4)}</td>
+                    <td class="py-2.5 px-3 font-mono font-bold ${v.risk_score >= 70 ? 'text-danger' : 'text-slate-300'}">${v.risk_score}</td>
+                    <td class="py-2.5 px-3">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${sevColors[v.severity] || sevColors.LOW}">${v.severity}</span>
+                    </td>
+                    <td class="py-2.5 px-3">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${statusColors[v.status] || ''}">${v.status}</span>
+                    </td>
+                    <td class="py-2.5 px-3 text-right">
+                        ${v.status !== 'Rescued' ? 
+                            `<button onclick="markRescued('${v.victim_id}')" class="px-2 py-1 bg-emerald-600/30 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded text-[10px] font-semibold transition">Mark Rescued</button>` : 
+                            `<span class="text-emerald-400 text-[10px] font-bold"><i class="fa-solid fa-check"></i> Safe</span>`}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+
+                // Map Marker
+                const markerColor = v.status === 'Rescued' ? '#10b981' : (v.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b');
+                const vIcon = L.divIcon({
+                    className: 'victim-marker',
+                    html: `<div style="background:${markerColor}; width:12px; height:12px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 8px ${markerColor};"></div>`,
+                    iconSize: [12, 12]
+                });
+                const marker = L.marker([v.latitude, v.longitude], { icon: vIcon }).addTo(victimMarkersGroup);
+                marker.bindPopup(`
+                    <div style="font-size:11px;">
+                        <b>${v.victim_id} (${v.object_type.toUpperCase()})</b><br>
+                        Severity: <b style="color:${markerColor}">${v.severity}</b> (Risk: ${v.risk_score})<br>
+                        Decision: ${v.rescue_decision}<br>
+                        Status: <b>${v.status}</b>
+                    </div>
+                `);
+            });
+        }
+
+        // Render Hazards
+        async function fetchHazards() {
+            try {
+                const res = await fetch('/api/hazards');
+                if (!res.ok) return;
+                const hazards = await res.json();
+                hazardMarkersGroup.clearLayers();
+
+                hazards.forEach(h => {
+                    const circle = L.circle([h.latitude, h.longitude], {
+                        color: '#f97316',
+                        fillColor: '#ea580c',
+                        fillOpacity: 0.25,
+                        radius: h.radius_m || 30
+                    }).addTo(hazardMarkersGroup);
+                    circle.bindPopup(`<b>HAZARD: ${h.hazard_type.toUpperCase()}</b><br>Influence Radius: ${h.radius_m}m`);
+                });
+            } catch (e) {}
+        }
+        fetchHazards();
+
+        // Mark Rescued Action
+        async function markRescued(vid) {
+            await fetch(`/api/victims/${vid}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'Rescued' })
+            });
+            showToast(`Victim ${vid} marked as Rescued!`, 'success');
+            fetchTelemetry();
+        }
+
+        // Operational Actions
+        async function triggerAction(action) {
+            const res = await fetch('/api/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+            const data = await res.json();
+            showToast(data.message, 'info');
+            fetchTelemetry();
+        }
+
+        function exportCSV() {
+            window.location.href = '/api/export/csv';
+        }
+
+        function exportJSON() {
+            window.location.href = '/api/export/json';
+        }
+
+        // Camera Feed Rendering (Canvas Simulation & Thermal Transform)
+        const rgbCanvas = document.getElementById('rgb-canvas');
+        const rgbCtx = rgbCanvas.getContext('2d');
+        const thermalCanvas = document.getElementById('thermal-canvas');
+        const tCtx = thermalCanvas.getContext('2d');
+
+        let frameAnim = 0;
+        function renderLiveFeeds() {
+            frameAnim += 0.05;
+            const w = rgbCanvas.width;
+            const h = rgbCanvas.height;
+
+            if (currentSource === 'webcam' && webcamStream) {
+                const video = document.getElementById('webcam-video');
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    rgbCtx.drawImage(video, 0, 0, w, h);
+                }
+            } else {
+                // Synthesize Dynamic RGB Disaster Feed
+                rgbCtx.fillStyle = '#1e293b';
+                rgbCtx.fillRect(0, 0, w, h);
+
+                // Ground Terrain
+                rgbCtx.fillStyle = '#334155';
+                rgbCtx.beginPath();
+                rgbCtx.moveTo(0, h * 0.7);
+                rgbCtx.lineTo(w, h * 0.65);
+                rgbCtx.lineTo(w, h);
+                rgbCtx.lineTo(0, h);
+                rgbCtx.fill();
+
+                // Fire Hazard
+                const fireX = w * 0.8;
+                const fireY = h * 0.45;
+                const flicker = Math.sin(frameAnim * 8) * 6;
+                rgbCtx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+                rgbCtx.beginPath();
+                rgbCtx.arc(fireX, fireY, 35 + flicker, 0, Math.PI * 2);
+                rgbCtx.fill();
+                rgbCtx.fillStyle = 'rgba(245, 158, 11, 0.9)';
+                rgbCtx.beginPath();
+                rgbCtx.arc(fireX, fireY - 5, 20 + flicker, 0, Math.PI * 2);
+                rgbCtx.fill();
+
+                // Walking Victim
+                const px = (w * 0.3) + Math.sin(frameAnim * 0.8) * 80;
+                const py = h * 0.62;
+
+                // Bounding Box
+                rgbCtx.strokeStyle = '#10b981';
+                rgbCtx.lineWidth = 2;
+                rgbCtx.strokeRect(px - 20, py - 60, 40, 70);
+
+                // Label
+                rgbCtx.fillStyle = '#10b981';
+                rgbCtx.fillRect(px - 20, py - 78, 85, 16);
+                rgbCtx.fillStyle = '#ffffff';
+                rgbCtx.font = '10px monospace';
+                rgbCtx.fillText('person 0.94', px - 16, py - 66);
+
+                // Person Silhouette
+                rgbCtx.fillStyle = '#e2e8f0';
+                rgbCtx.beginPath();
+                rgbCtx.arc(px, py - 45, 8, 0, Math.PI * 2); // head
+                rgbCtx.fill();
+                rgbCtx.fillRect(px - 6, py - 35, 12, 25); // torso
+            }
+
+            // Generate Simulated Thermal IR View (Inferno algorithm)
+            const imgData = rgbCtx.getImageData(0, 0, w, h);
+            const data = imgData.data;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const brightness = (data[i] * 0.299) + (data[i + 1] * 0.587) + (data[i + 2] * 0.114);
+                // Inferno colormap conversion
+                if (brightness < 64) {
+                    data[i] = brightness * 1.8;      // R
+                    data[i + 1] = 0;                  // G
+                    data[i + 2] = brightness * 2.8;  // B
+                } else if (brightness < 128) {
+                    data[i] = 115 + (brightness - 64) * 2.2;
+                    data[i + 1] = 0;
+                    data[i + 2] = 180 - (brightness - 64) * 2.5;
+                } else if (brightness < 192) {
+                    data[i] = 255;
+                    data[i + 1] = (brightness - 128) * 3.5;
+                    data[i + 2] = 0;
+                } else {
+                    data[i] = 255;
+                    data[i + 1] = 255;
+                    data[i + 2] = (brightness - 192) * 4.0;
+                }
+            }
+            tCtx.putImageData(imgData, 0, 0);
+
+            requestAnimationFrame(renderLiveFeeds);
+        }
+        renderLiveFeeds();
+
+        // Source Switcher
+        function setCameraSource(src) {
+            currentSource = src;
+            document.getElementById('btn-src-sim').className = src === 'simulation' ? "px-2.5 py-1 bg-primary text-white rounded-lg text-[10px] font-semibold" : "px-2.5 py-1 bg-slate-800 text-slate-200 rounded-lg text-[10px] font-semibold";
+            document.getElementById('btn-src-webcam').className = src === 'webcam' ? "px-2.5 py-1 bg-primary text-white rounded-lg text-[10px] font-semibold" : "px-2.5 py-1 bg-slate-800 text-slate-200 rounded-lg text-[10px] font-semibold";
+        }
+
+        async function startWebcam() {
+            try {
+                webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } });
+                const video = document.getElementById('webcam-video');
+                video.srcObject = webcamStream;
+                setCameraSource('webcam');
+                showToast("USB Webcam connected successfully!", "success");
+            } catch (e) {
+                showToast("Webcam access denied or not available", "warning");
+            }
+        }
+
+        // Phone Camera Modal
+        function openPhoneModal() {
+            document.getElementById('phone-modal').classList.remove('hidden');
+        }
+        function closePhoneModal() {
+            document.getElementById('phone-modal').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

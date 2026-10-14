@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rescue Drone • Mobile Camera Transmitter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            touch-action: manipulation;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 0.4; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+        .stream-pulse {
+            animation: pulse-ring 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 flex flex-col h-screen overflow-hidden font-sans">
+
+    <!-- Top Bar -->
+    <header class="bg-slate-900/90 backdrop-blur px-4 py-3 border-b border-slate-800 flex items-center justify-between z-20">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                <i class="fa-solid fa-drone text-sm"></i>
+            </div>
+            <div>
+                <h1 class="text-sm font-bold tracking-wide">Rescue Transmitter</h1>
+                <p class="text-[10px] text-slate-400">Sector Drone Optical Link</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <span id="conn-badge" class="bg-red-500/20 text-red-400 border border-red-500/40 text-[11px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-red-400"></span> OFFLINE
+            </span>
+        </div>
+    </header>
+
+    <!-- Camera Viewport Area -->
+    <main class="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+        <!-- Live Video Element (Mirrored only if front camera) -->
+        <video id="video" playsinline autoplay muted class="w-full h-full object-cover"></video>
+        
+        <!-- Offscreen Canvas for Frame Capture -->
+        <canvas id="captureCanvas" class="hidden"></canvas>
+
+        <!-- Drone Camera HUD Overlay on Phone -->
+        <div class="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between">
+            <!-- HUD Top Corners -->
+            <div class="flex justify-between items-start text-[11px] font-mono text-emerald-400/80">
+                <div class="bg-black/60 px-2 py-1 rounded backdrop-blur border border-emerald-500/20">
+                    <div>FPS: <span id="fps-display">0</span></div>
+                    <div>RES: <span id="res-display">640x480</span></div>
+                </div>
+                <div class="bg-black/60 px-2 py-1 rounded backdrop-blur border border-emerald-500/20 text-right">
+                    <div>FRAMES: <span id="frame-counter">0</span></div>
+                    <div>LATENCY: <span id="latency-display">-- ms</span></div>
+                </div>
+            </div>
+
+            <!-- HUD Center Reticle -->
+            <div class="flex items-center justify-center">
+                <div class="w-28 h-28 border border-emerald-400/40 rounded-full flex items-center justify-center relative">
+                    <div class="w-2 h-2 bg-emerald-400 rounded-full"></div>
+                    <div class="absolute w-8 h-[1px] bg-emerald-400/50 left-[-16px]"></div>
+                    <div class="absolute w-8 h-[1px] bg-emerald-400/50 right-[-16px]"></div>
+                    <div class="absolute h-8 w-[1px] bg-emerald-400/50 top-[-16px]"></div>
+                    <div class="absolute h-8 w-[1px] bg-emerald-400/50 bottom-[-16px]"></div>
+                </div>
+            </div>
+
+            <!-- HUD Bottom Telemetry Banner -->
+            <div class="text-center">
+                <span class="inline-flex items-center gap-1.5 bg-black/60 border border-blue-500/30 text-blue-300 font-mono text-[11px] px-3 py-1 rounded-full backdrop-blur">
+                    <span class="w-2 h-2 rounded-full bg-blue-400 animate-ping"></span>
+                    STREAMING ACTIVE TO COMMAND DASHBOARD
+                </span>
+            </div>
+        </div>
+
+        <!-- Permission / Start Overlay if camera not active -->
+        <div id="start-overlay" class="absolute inset-0 bg-slate-950/90 backdrop-blur z-30 flex flex-col items-center justify-center p-6 text-center">
+            <div class="w-20 h-20 rounded-3xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 text-3xl mb-4 shadow-xl">
+                <i class="fa-solid fa-camera"></i>
+            </div>
+            <h2 class="text-lg font-bold text-white mb-2">Connect Mobile Camera</h2>
+            <p class="text-xs text-slate-400 max-w-xs mb-6">
+                Tap the button below to allow camera access. Your phone will stream live video to the AI Rescue Drone Dashboard.
+            </p>
+            <button id="btn-enable-cam" onclick="startCamera()" class="w-full max-w-xs bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 transition">
+                <i class="fa-solid fa-video"></i> Start Streaming Camera
+            </button>
+            <p id="error-msg" class="text-xs text-red-400 mt-4 hidden"></p>
+        </div>
+    </main>
+
+    <!-- Controls Bar -->
+    <footer class="bg-slate-900/95 backdrop-blur px-4 py-4 border-t border-slate-800 flex items-center justify-around z-20">
+        <!-- Flip Camera -->
+        <button onclick="flipCamera()" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white active:scale-90 transition">
+            <div class="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-base">
+                <i class="fa-solid fa-camera-rotate"></i>
+            </div>
+            <span class="text-[10px] font-medium">Flip</span>
+        </button>
+
+        <!-- Toggle Torch / Flashlight (if supported) -->
+        <button id="btn-torch" onclick="toggleTorch()" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white active:scale-90 transition">
+            <div class="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-base">
+                <i class="fa-solid fa-flashlight" id="torch-icon"></i>
+            </div>
+            <span class="text-[10px] font-medium">Torch</span>
+        </button>
+
+        <!-- Quality / Resolution toggle -->
+        <button onclick="toggleResolution()" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white active:scale-90 transition">
+            <div class="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-blue-400" id="res-btn-label">
+                VGA
+            </div>
+            <span class="text-[10px] font-medium">Quality</span>
+        </button>
+
+        <!-- Pause / Resume Stream -->
+        <button id="btn-pause-stream" onclick="toggleStreamPause()" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white active:scale-90 transition">
+            <div class="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-base" id="pause-btn-icon">
+                <i class="fa-solid fa-pause"></i>
+            </div>
+            <span class="text-[10px] font-medium" id="pause-btn-label">Pause</span>
+        </button>
+    </footer>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('captureCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let currentStream = null;
+        let currentFacing = 'environment'; // default to rear camera
+        let isStreaming = false;
+        let isPaused = false;
+        let torchActive = false;
+        let frameCounter = 0;
+        let fpsCounter = 0;
+        let lastFpsTime = performance.now();
+        let targetWidth = 640;
+        let targetHeight = 480;
+        let jpegQuality = 0.65;
+        let isUploading = false;
+
+        async function startCamera() {
+            try {
+                if (currentStream) {
+                    currentStream.getTracks().forEach(t => t.stop());
+                }
+
+                const constraints = {
+                    video: {
+                        facingMode: { ideal: currentFacing },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                };
+
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = currentStream;
+                await video.play();
+
+                document.getElementById('start-overlay').classList.add('hidden');
+                
+                // Update badge
+                const badge = document.getElementById('conn-badge');
+                badge.className = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[11px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1.5";
+                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> LIVE';
+
+                canvas.width = targetWidth;
+                canvas.height = targetHeight;
+
+                isStreaming = true;
+                sendFrameLoop();
+            } catch (err) {
+                console.error("Camera access error:", err);
+                const errMsg = document.getElementById('error-msg');
+                errMsg.textContent = "Camera Error: " + (err.message || "Permission denied. Please grant camera access.");
+                errMsg.classList.remove('hidden');
+            }
+        }
+
+        async function flipCamera() {
+            currentFacing = (currentFacing === 'environment') ? 'user' : 'environment';
+            await startCamera();
+        }
+
+        async function toggleTorch() {
+            if (!currentStream) return;
+            const track = currentStream.getVideoTracks()[0];
+            const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+            if (!capabilities.torch) {
+                alert("Flashlight / Torch not supported on this device/browser.");
+                return;
+            }
+            try {
+                torchActive = !torchActive;
+                await track.applyConstraints({
+                    advanced: [{ torch: torchActive }]
+                });
+                document.getElementById('torch-icon').className = torchActive 
+                    ? "fa-solid fa-flashlight text-yellow-400" 
+                    : "fa-solid fa-flashlight text-slate-400";
+            } catch (e) {
+                console.error("Torch error:", e);
+            }
+        }
+
+        function toggleResolution() {
+            if (targetWidth === 640) {
+                targetWidth = 800;
+                targetHeight = 600;
+                document.getElementById('res-btn-label').textContent = 'HD';
+                document.getElementById('res-display').textContent = '800x600';
+            } else if (targetWidth === 800) {
+                targetWidth = 480;
+                targetHeight = 360;
+                document.getElementById('res-btn-label').textContent = 'LOW';
+                document.getElementById('res-display').textContent = '480x360';
+            } else {
+                targetWidth = 640;
+                targetHeight = 480;
+                document.getElementById('res-btn-label').textContent = 'VGA';
+                document.getElementById('res-display').textContent = '640x480';
+            }
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+        }
+
+        function toggleStreamPause() {
+            isPaused = !isPaused;
+            const btnIcon = document.getElementById('pause-btn-icon');
+            const btnLabel = document.getElementById('pause-btn-label');
+            const badge = document.getElementById('conn-badge');
+
+            if (isPaused) {
+                btnIcon.innerHTML = '<i class="fa-solid fa-play text-emerald-400"></i>';
+                btnLabel.textContent = 'Resume';
+                badge.className = "bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[11px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1.5";
+                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span> PAUSED';
+            } else {
+                btnIcon.innerHTML = '<i class="fa-solid fa-pause"></i>';
+                btnLabel.textContent = 'Pause';
+                badge.className = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[11px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1.5";
+                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> LIVE';
+            }
+        }
+
+        // Capture and send frames loop
+        function sendFrameLoop() {
+            if (!isStreaming) return;
+
+            if (!isPaused && video.readyState === video.HAVE_ENOUGH_DATA && !isUploading) {
+                isUploading = true;
+                const startTime = performance.now();
+
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                canvas.toBlob(blob => {
+                    if (!blob) {
+                        isUploading = false;
+                        setTimeout(sendFrameLoop, 40);
+                        return;
+                    }
+
+                    fetch('/api/frame', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'image/jpeg' },
+                        body: blob
+                    }).then(res => {
+                        isUploading = false;
+                        frameCounter++;
+                        fpsCounter++;
+                        const latency = Math.round(performance.now() - startTime);
+
+                        document.getElementById('frame-counter').textContent = frameCounter;
+                        document.getElementById('latency-display').textContent = `${latency} ms`;
+
+                        const now = performance.now();
+                        if (now - lastFpsTime >= 1000) {
+                            document.getElementById('fps-display').textContent = fpsCounter;
+                            fpsCounter = 0;
+                            lastFpsTime = now;
+                        }
+
+                        // Schedule next frame (~25-30 FPS)
+                        setTimeout(sendFrameLoop, 35);
+                    }).catch(err => {
+                        isUploading = false;
+                        setTimeout(sendFrameLoop, 100);
+                    });
+                }, 'image/jpeg', jpegQuality);
+            } else {
+                setTimeout(sendFrameLoop, 50);
+            }
+        }
+
+        // Auto start on iOS/Android if permissions allow or user interacts
+        window.addEventListener('load', () => {
+            // Check if getUserMedia is supported
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                document.getElementById('error-msg').textContent = "getUserMedia not supported on this browser. Try Chrome or Safari.";
+                document.getElementById('error-msg').classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
